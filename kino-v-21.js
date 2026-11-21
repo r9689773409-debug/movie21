@@ -2769,48 +2769,68 @@
             return (genreNames[a] || a).localeCompare(genreNames[b] || b, 'ru');
         });
         var genre = '';
-        var page = 0;
-        var perPage = 20;
+        var initialCount = 100;
+        var batchSize = 50;
         var choosingGenre = false;
 
         function catalogScreen() {
             var matches = genre ? sorted.filter(function (film) {
                 return (film.genres || []).indexOf(genre) !== -1;
             }) : sorted;
-            var pages = Math.ceil(matches.length / perPage);
             var screen = $('<section class="kino21-catalog"></section>');
             var toolbar = $('<div class="kino21-toolbar"></div>');
             var grid = $('<div class="kino21-grid"></div>');
             toolbar.append(catalogButton('Жанр · ' + (genreNames[genre] || genre || 'Все жанры'), showGenres));
-            toolbar.append($('<p class="kino21-page"></p>').text(
-                matches.length + ' · Страница ' + (page + 1) + ' из ' + pages));
-            if (page > 0) toolbar.append(catalogButton('← Назад', function () { move(-1); }));
-            if (page + 1 < pages) toolbar.append(catalogButton('Дальше →', function () { move(1); }));
+            toolbar.append($('<p class="kino21-count"></p>').text('В каталоге: ' + matches.length));
             screen.append(toolbar).append(grid);
             var pending = [];
-            matches.slice(page * perPage, (page + 1) * perPage).forEach(function (film) {
-                var card = filmCard(film);
-                updateFilmCard(card, film);
-                grid.append(card);
-                if (film.posterPath === undefined) pending.push({ film: film, card: card });
-            });
-            function loadNext() {
-                if (!pending.length || !document.documentElement.contains(screen[0])) return;
-                var item = pending.shift();
+            var rendered = 0;
+            var loading = 0;
+
+            function loadPoster(item) {
+                loading++;
                 loadFilmDetails(item.film, function () {
                     if (document.documentElement.contains(item.card[0])) updateFilmCard(item.card, item.film);
-                    loadNext();
+                    loading--;
+                    setTimeout(loadPosters, 0);
                 });
             }
-            if (pending.length) setTimeout(function () {
-                for (var worker = 0; worker < 3; worker++) loadNext();
+
+            function loadPosters() {
+                if (!document.documentElement.contains(screen[0])) return;
+                while (loading < 3 && pending.length) loadPoster(pending.shift());
+            }
+
+            function appendBatch(scroll) {
+                var limit = rendered === 0 ? initialCount : batchSize;
+                var batch = matches.slice(rendered, rendered + limit);
+                if (!batch.length) return;
+                rendered += batch.length;
+                var selectors = batch.map(function (film) {
+                    var card = filmCard(film);
+                    updateFilmCard(card, film);
+                    if (scroll) card.on('hover:focus', function () { scroll.update(this); });
+                    grid.append(card);
+                    if (film.posterPath === undefined) pending.push({ film: film, card: card });
+                    return card[0];
+                });
+                if (scroll) {
+                    Lampa.Controller.collectionAppend(selectors);
+                    loadPosters();
+                }
+            }
+
+            appendBatch();
+            setTimeout(function () {
+                if (!document.documentElement.contains(screen[0])) return;
+                var scroll = Lampa.Modal.scroll();
+                scroll.reset();
+                scroll.onEnd = function () {
+                    if (document.documentElement.contains(screen[0])) appendBatch(scroll);
+                };
+                loadPosters();
             }, 0);
             return screen;
-        }
-
-        function move(step) {
-            page += step;
-            Lampa.Modal.update(catalogScreen());
         }
 
         function showGenres() {
@@ -2821,7 +2841,6 @@
                 var button = catalogButton(label + ' · ' + (available[item] || films.length), function () {
                     choosingGenre = false;
                     genre = item;
-                    page = 0;
                     Lampa.Modal.title('');
                     Lampa.Modal.update(catalogScreen());
                 });
@@ -2851,9 +2870,8 @@
 
     function openBroadcast() {
         var screen = $('<section class="kino21-screen">' +
-            '<p class="kino21-slot">21:00–01:00 · Вечерний сеанс</p>' +
+            '<p class="kino21-slot">21:00 · Вечерний сеанс</p>' +
             '<h2 class="kino21-film"></h2>' +
-            '<p>По времени устройства</p>' +
             '<div class="kino21-live kino21-play selector" role="button">Открыть фильм</div>' +
             '<div class="kino21-archive"><p class="kino21-yesterday-title"></p>' +
             '<div class="kino21-yesterday kino21-play selector" role="button">Посмотреть вчерашний фильм</div>' +
@@ -2955,7 +2973,7 @@
             '.kino21-genres{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5em,1fr));gap:.5em;padding:.5em}' +
             '.kino21-genres .kino21-catalog-button{margin:0}' +
             '.kino21-genres [aria-pressed="true"]{box-shadow:inset 0 0 0 .11em #ffbe7b}' +
-            '.kino21-page{margin:.35em .8em .35em .15em}' +
+            '.kino21-count{margin:.35em .8em .35em .15em}' +
             '.kino21-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.85em}' +
             '.kino21-card{min-width:0;cursor:pointer;background:#30272e;border-radius:.45em;overflow:hidden}' +
             '.kino21-card.focus,.kino21-card:hover{outline:.16em solid #ffbe7b;background:#ffbe7b;color:#241a27}' +
