@@ -2822,7 +2822,7 @@
                     choosingGenre = false;
                     genre = item;
                     page = 0;
-                    Lampa.Modal.title('Все фильмы');
+                    Lampa.Modal.title('');
                     Lampa.Modal.update(catalogScreen());
                 });
                 button.attr('aria-pressed', item === genre ? 'true' : 'false');
@@ -2833,13 +2833,13 @@
         }
 
         Lampa.Modal.open({
-            title: 'Все фильмы',
+            title: '',
             html: catalogScreen(),
             size: 'full',
             onBack: function () {
                 if (choosingGenre) {
                     choosingGenre = false;
-                    Lampa.Modal.title('Все фильмы');
+                    Lampa.Modal.title('');
                     Lampa.Modal.update(catalogScreen());
                 } else {
                     Lampa.Modal.close();
