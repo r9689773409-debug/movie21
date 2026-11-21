@@ -2681,24 +2681,26 @@
         return film.year ? film.title + ' (' + film.year + ')' : film.title;
     }
 
-    function loadRussianTitle(film, callback) {
+    function loadFilmDetails(film, callback) {
         var source = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb;
-        if (!film.lookupRu || !source || typeof source.get !== 'function') {
+        if (film.posterPath !== undefined || !source || typeof source.get !== 'function') {
             if (callback) callback();
             return;
         }
-        if (film.titleCallbacks) {
-            if (callback) film.titleCallbacks.push(callback);
+        if (film.detailCallbacks) {
+            if (callback) film.detailCallbacks.push(callback);
             return;
         }
-        film.titleCallbacks = callback ? [callback] : [];
+        film.detailCallbacks = callback ? [callback] : [];
 
         function finish(data) {
             var name = data && (data.title || data.name);
-            if (typeof name === 'string' && /[А-Яа-яЁё]/.test(name)) film.title = name;
+            if (film.lookupRu && typeof name === 'string' && /[А-Яа-яЁё]/.test(name)) film.title = name;
             film.lookupRu = false;
-            var callbacks = film.titleCallbacks;
-            delete film.titleCallbacks;
+            var path = data && data.poster_path;
+            film.posterPath = typeof path === 'string' && /^\/[\w.-]+$/.test(path) ? path : null;
+            var callbacks = film.detailCallbacks;
+            delete film.detailCallbacks;
             callbacks.forEach(function (done) { done(); });
         }
 
@@ -2732,11 +2734,36 @@
             });
     }
 
+    function filmCard(film) {
+        return $('<div class="kino21-card selector" role="button">' +
+            '<div class="kino21-poster"><img alt="" decoding="async"></div>' +
+            '<div class="kino21-caption"></div></div>')
+            .on('hover:enter', function () {
+                if (!document.documentElement.contains(this)) return;
+                Lampa.Modal.close();
+                openFilm(film);
+            });
+    }
+
+    function updateFilmCard(card, film) {
+        card.find('.kino21-caption').text(filmLabel(film));
+        if (!film.posterPath) return;
+
+        var image = card.find('img');
+        if (image.attr('src')) return;
+        var source = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb;
+        var url = source && typeof source.img === 'function' ? source.img(film.posterPath, 'w342') : '';
+        image.on('load', function () { image.addClass('kino21-poster-ready'); })
+            .attr('src', url || 'https://image.tmdb.org/t/p/w342' + film.posterPath);
+    }
+
     function openCatalog() {
         var sorted = films.slice().sort(function (a, b) { return a.title.localeCompare(b.title, 'ru'); });
         var available = {};
         sorted.forEach(function (film) {
-            (film.genres || []).forEach(function (genre) { available[genre] = true; });
+            (film.genres || []).forEach(function (genre) {
+                available[genre] = (available[genre] || 0) + 1;
+            });
         });
         var genres = Object.keys(available).sort(function (a, b) {
             return (genreNames[a] || a).localeCompare(genreNames[b] || b, 'ru');
@@ -2752,29 +2779,32 @@
             }) : sorted;
             var pages = Math.ceil(matches.length / perPage);
             var screen = $('<section class="kino21-catalog"></section>');
-            screen.append(catalogButton('Жанр · ' + (genreNames[genre] || genre || 'Все жанры'), showGenres));
-            screen.append($('<p class="kino21-page"></p>').text(
-                'Найдено: ' + matches.length + ' · Страница ' + (page + 1) + ' из ' + pages));
-            if (page > 0) screen.append(catalogButton('← Предыдущая страница', function () { move(-1); }));
-            if (page + 1 < pages) screen.append(catalogButton('Следующая страница →', function () { move(1); }));
+            var toolbar = $('<div class="kino21-toolbar"></div>');
+            var grid = $('<div class="kino21-grid"></div>');
+            toolbar.append(catalogButton('Жанр · ' + (genreNames[genre] || genre || 'Все жанры'), showGenres));
+            toolbar.append($('<p class="kino21-page"></p>').text(
+                matches.length + ' · Страница ' + (page + 1) + ' из ' + pages));
+            if (page > 0) toolbar.append(catalogButton('← Назад', function () { move(-1); }));
+            if (page + 1 < pages) toolbar.append(catalogButton('Дальше →', function () { move(1); }));
+            screen.append(toolbar).append(grid);
             var pending = [];
             matches.slice(page * perPage, (page + 1) * perPage).forEach(function (film) {
-                var button = catalogButton(filmLabel(film), function () {
-                    Lampa.Modal.close();
-                    openFilm(film);
-                });
-                screen.append(button);
-                if (film.lookupRu) pending.push({ film: film, button: button });
+                var card = filmCard(film);
+                updateFilmCard(card, film);
+                grid.append(card);
+                if (film.posterPath === undefined) pending.push({ film: film, card: card });
             });
-            function translateNext() {
+            function loadNext() {
                 if (!pending.length || !document.documentElement.contains(screen[0])) return;
                 var item = pending.shift();
-                loadRussianTitle(item.film, function () {
-                    item.button.text(filmLabel(item.film));
-                    translateNext();
+                loadFilmDetails(item.film, function () {
+                    if (document.documentElement.contains(item.card[0])) updateFilmCard(item.card, item.film);
+                    loadNext();
                 });
             }
-            if (pending.length) setTimeout(translateNext, 0);
+            if (pending.length) setTimeout(function () {
+                for (var worker = 0; worker < 3; worker++) loadNext();
+            }, 0);
             return screen;
         }
 
@@ -2785,15 +2815,18 @@
 
         function showGenres() {
             choosingGenre = true;
-            var screen = $('<section class="kino21-catalog"></section>');
+            var screen = $('<section class="kino21-genres"></section>');
             [''].concat(genres).forEach(function (item) {
-                screen.append(catalogButton(genreNames[item] || item || 'Все жанры', function () {
+                var label = genreNames[item] || item || 'Все жанры';
+                var button = catalogButton(label + ' · ' + (available[item] || films.length), function () {
                     choosingGenre = false;
                     genre = item;
                     page = 0;
                     Lampa.Modal.title('Все фильмы');
                     Lampa.Modal.update(catalogScreen());
-                }));
+                });
+                button.attr('aria-pressed', item === genre ? 'true' : 'false');
+                screen.append(button);
             });
             Lampa.Modal.title('Жанры');
             Lampa.Modal.update(screen);
@@ -2802,7 +2835,7 @@
         Lampa.Modal.open({
             title: 'Все фильмы',
             html: catalogScreen(),
-            size: 'large',
+            size: 'full',
             onBack: function () {
                 if (choosingGenre) {
                     choosingGenre = false;
@@ -2835,8 +2868,8 @@
             var now = new Date();
             var film = filmAt(now);
             var yesterday = scheduledFilm(now, 1);
-            if (film && film.lookupRu) loadRussianTitle(film);
-            if (yesterday.lookupRu) loadRussianTitle(yesterday);
+            if (film && film.lookupRu) loadFilmDetails(film);
+            if (yesterday.lookupRu) loadFilmDetails(yesterday);
             var label = film ? filmLabel(film) : 'Сеанс начнётся в 21:00';
             var action = film ? 'Открыть фильм' : 'Закрыть';
             var previous = 'Предыдущий сеанс · ' + filmLabel(yesterday);
@@ -2915,9 +2948,24 @@
             '.kino21-archive{margin-top:1.2em;padding-top:.85em;border-top:1px solid #735b59}' +
             '.kino21-yesterday-title{margin:0 0 .25em}' +
             '.kino21-archive .kino21-play{margin:.4em .5em .2em 0}' +
-            '.kino21-catalog-button{cursor:pointer;padding:.55em .75em;margin:.22em 0;border-radius:.3em;background:#30272e}' +
+            '.kino21-catalog{padding:.3em .4em 1em;color:#ffebc5}' +
+            '.kino21-toolbar{display:flex;flex-wrap:wrap;align-items:center;margin-bottom:.65em}' +
+            '.kino21-catalog-button{cursor:pointer;padding:.55em .75em;margin:.22em .4em .22em 0;border-radius:.3em;background:#30272e}' +
             '.kino21-catalog-button.focus,.kino21-catalog-button:hover{background:#ffbe7b;color:#241a27}' +
-            '.kino21-page{margin:.65em .75em}'
+            '.kino21-genres{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5em,1fr));gap:.5em;padding:.5em}' +
+            '.kino21-genres .kino21-catalog-button{margin:0}' +
+            '.kino21-genres [aria-pressed="true"]{box-shadow:inset 0 0 0 .11em #ffbe7b}' +
+            '.kino21-page{margin:.35em .8em .35em .15em}' +
+            '.kino21-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.85em}' +
+            '.kino21-card{min-width:0;cursor:pointer;background:#30272e;border-radius:.45em;overflow:hidden}' +
+            '.kino21-card.focus,.kino21-card:hover{outline:.16em solid #ffbe7b;background:#ffbe7b;color:#241a27}' +
+            '.kino21-poster{position:relative;padding-top:150%;background:repeating-linear-gradient(0deg,#241a27 0,#241a27 2px,#322538 3px,#322538 4px)}' +
+            '.kino21-poster img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;visibility:hidden}' +
+            '.kino21-poster img.kino21-poster-ready{visibility:visible}' +
+            '.kino21-caption{padding:.55em .5em;line-height:1.2;overflow-wrap:break-word}' +
+            '@media(max-width:900px){.kino21-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}' +
+            '@media(max-width:600px){.kino21-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:.55em}}' +
+            '@media(max-width:360px){.kino21-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}'
         ).appendTo('head');
 
         var icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
