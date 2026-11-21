@@ -23,17 +23,20 @@
     ];
 
     function filmAt(now) {
+        var hour = now.getHours();
+        if (hour >= 1 && hour < 21) return null;
+
         // UTC нужен только для нумерации местных дат, включая дни перевода часов.
         var day = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000;
-        var slot = day - firstDay - (now.getHours() < 21 ? 1 : 0);
+        var slot = day - firstDay - (hour < 1 ? 1 : 0);
         return films[((slot % films.length) + films.length) % films.length];
     }
 
     function openBroadcast() {
         var screen = $('<section class="kino21-screen">' +
-            '<p class="kino21-slot">21:00 · Вечерний сеанс</p>' +
+            '<p class="kino21-slot">21:00–01:00 · Вечерний сеанс</p>' +
             '<h2 class="kino21-film"></h2>' +
-            '<p>Смена фильма в 21:00 по времени устройства</p>' +
+            '<p>По времени устройства</p>' +
             '<div class="kino21-play selector" role="button">Открыть фильм</div></section>');
         var heading = screen.find('.kino21-film');
         var button = screen.find('.kino21-play');
@@ -42,8 +45,10 @@
 
         function refresh() {
             var film = filmAt(new Date());
-            var label = film.title + ' (' + film.year + ')';
+            var label = film ? film.title + ' (' + film.year + ')' : 'Сеанс начнётся в 21:00';
+            var action = film ? 'Открыть фильм' : 'Закрыть';
             if (heading.text() !== label) heading.text(label);
+            if (button.text() !== action) button.text(action);
         }
 
         function close() {
@@ -55,6 +60,15 @@
         button.on('hover:enter click', function () {
             if (closed) return;
             var film = filmAt(new Date());
+            if (!film) {
+                if (button.text() === 'Закрыть') close();
+                else refresh();
+                return;
+            }
+            if (button.text() === 'Закрыть') {
+                refresh();
+                return;
+            }
             close();
             Lampa.Activity.push({
                 url: '',
